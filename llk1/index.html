@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <meta name="format-detection" content="telephone=no, email=no">
+    <meta name="renderer" content="webkit">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="HandheldFriendly" content="true">
+    <meta name="screen-orientation" content="portrait">
+    <meta name="x5-orientation" content="portrait">
+    <meta name="full-screen" content="yes">
+    <meta name="x5-fullscreen" content="true">
+    <meta name="browsermode" content="application">
+    <meta name="x5-page-mode" content="app">
+    <meta name="msapplication-tap-highlight" content="no">
+    <meta charset='utf-8'>
+    <title>连连看（初版）</title>
+    <style>
+    html,
+    body {
+        margin: 0;
+        height: 100%;
+    }
+    .container {
+    	width: 100%;
+    	max-width: 800px;
+    	height: 100%;
+    	max-height: 800px;
+    	margin: 0 auto;
+    }
+    </style>
+</head>
+
+<body>
+	<div class='container'>
+    	<canvas id='board'></canvas>
+    </div>
+    <script>
+    // 将context操作转换为链式调用
+    function Canvas2DContext(canvas) {
+	    if (typeof canvas === 'string') {
+	        canvas = document.getElementById(canvas);
+	    }
+	    if (!(this instanceof Canvas2DContext)) {
+	        return new Canvas2DContext(canvas);
+	    }
+	    this.context = this.ctx = canvas.getContext('2d');
+	    if (!Canvas2DContext.prototype.arc) {
+	        Canvas2DContext.setup.call(this, this.ctx);
+	    }
+	}
+	Canvas2DContext.setup = function() {
+	    var methods = ['arc', 'arcTo', 'beginPath', 'bezierCurveTo', 'clearRect', 'clip',
+	        'closePath', 'drawImage', 'fill', 'fillRect', 'fillText', 'lineTo', 'moveTo',
+	        'quadraticCurveTo', 'rect', 'restore', 'rotate', 'save', 'scale', 'setTransform',
+	        'stroke', 'strokeRect', 'strokeText', 'transform', 'translate'
+	    ];
+
+	    var getterMethods = ['createPattern', 'drawFocusRing', 'isPointInPath', 'measureText', 
+	        'createImageData', 'createLinearGradient',
+	        'createRadialGradient', 'getImageData', 'putImageData'
+	    ];
+
+	    var props = ['canvas', 'fillStyle', 'font', 'globalAlpha', 'globalCompositeOperation',
+	        'lineCap', 'lineJoin', 'lineWidth', 'miterLimit', 'shadowOffsetX', 'shadowOffsetY',
+	        'shadowBlur', 'shadowColor', 'strokeStyle', 'textAlign', 'textBaseline'
+	    ];
+
+	    for (let m of methods) {
+	        let method = m;
+	        Canvas2DContext.prototype[method] = function() {
+	            this.ctx[method].apply(this.ctx, arguments);
+	            return this;
+	        };
+	    }
+
+	    for (let m of getterMethods) {
+	        let method = m;
+	        Canvas2DContext.prototype[method] = function() {
+	            return this.ctx[method].apply(this.ctx, arguments);
+	        };
+	    }
+
+	    for (let p of props) {
+	        let prop = p;
+	        Canvas2DContext.prototype[prop] = function(value) {
+	            if (value === undefined)
+	                return this.ctx[prop];
+	            this.ctx[prop] = value;
+	            return this;
+	        };
+	    }
+	};
+    class Board {
+        constructor(canvas, imgList, backColor) {
+            // ========================
+        	// 可被访问的属性定义
+
+            var _canvas 		= this.canvas 		= canvas,					// canvas的引用
+            	_ctx 			= this.ctx 			= Canvas2DContext(canvas),	// context的引用
+            	_imgList 		= this.imgList 		= imgList,					// 图片们
+            	_backColor 		= this.backColor 	= backColor,				// 背景色
+            	_imgSources 	= this.imgSources	= {},						// 存放已经下载的图片的Image引用（draw用）
+            	_callback		= this.callback 	= function () {};			// 游戏状态改变的事件
+
+            // ========================
+            // 可被访问的函数定义
+
+            // 初始化
+            var _rebuild 		= this.rebuild 		= () => {
+                var parentStyle = getComputedStyle(_canvas.parentNode),		// 获取canvas父元素的宽高
+                	pHeight 	= _tInt(parentStyle.height),						
+                	pWidth 		= _tInt(parentStyle.width);
+                _canvas.height 	= pHeight;									// 去除px
+                _canvas.width 	= pWidth;
+
+
+                _ctx.fillStyle(_backColor).fillRect(0, 0, pWidth, pHeight)
+            },	_gameState		= this.gameState	= (sta) => {
+            	if (sta === undefined) {
+            		return _state;
+            	} else {
+            		_state 		= sta;
+            		_callback(sta);
+            		return this;
+            	}
+            }, _setConfig		= this.setConfig 	= (cf) => {
+            	for (let k in cf) {
+            		_config[k] 	= cf[k];
+            	}
+            	return this;
+            }, _build 			= this.build 		= () => {
+            	// 绘制矩阵
+            	_buildMatrix();
+            	return this;
+            }, _stateChange		= this.onChange		= (callback) => {
+            	_callback = callback;
+            	return this;
+            }, indexOf = [].indexOf ? function(arr, number) {
+		        return arr.indexOf(number);
+		    } : function(arr, number) {
+		        for (var l = arr.length - 1; l >= 0; l--) {
+		            if (arr[l] === number) return l;
+		        }
+		        return -1;
+		    };
+
+            // ========================
+            // 不可被访问的属性定义
+            var _state			= 'init',
+            	_boxWidth		= 0,		// 方块的宽度
+            	_boxHeight		= 0,		// 方块的高度
+            	_matrix			= [],		// 整个方块的矩阵集合
+            	_config 		= {
+	            	col 		: 0,		// 一列的方块个数
+	            	row			: 0, 		// 一排的方块个数 排 * 列 (必须是偶数，如果不是，将大的那个数值-1)
+            		bWidth 		: 1,		// 方块的边框宽
+            		bColor 		: 'red',	// 方块的边框颜色
+            		gap			: 2			// 两个方块之间的空隙
+            	};
+
+            // ========================
+
+            _rebuild();
+            _downImg();
+            // ========================
+            // 不可被访问的函数定义
+
+            // 下载所需资源
+            function _downImg () {
+            	var len 		= _imgList.length,
+            		downs		= len;
+            	_gameState('loading');
+            	while (len--) {
+            		let img 	= new Image(),
+            			src 	= _imgList[len];
+            		img.src 	= src;
+            		img.addEventListener('load', () => {
+            			_imgSources[src] = img;
+            			if (!--downs) {	// 全部下载完成
+            				_gameState('complete');	
+            			}
+            		})
+            	}
+            }
+
+            // 绘制图片
+            function _drawImg (src, left, top, width, height) {
+            	_ctx.drawImage(_imgSources[src], left, top, width, height);
+            }
+
+            // parseInt
+            function _tInt (str) {
+            	return +(str + '').replace(/\D.*/g, '')
+            }
+
+            function _buildMatrix () {
+            	var width 	= _canvas.width,
+            		height 	= _canvas.height,
+            		gap 	= _config.gap,
+            		row		= _config.row,
+            		col		= _config.col,
+            		__t;
+            	// 将行、列数量修改为更合理的
+            	if ((width 	> height & 
+            	    row 	> col) ||
+            		(width 	< height & 
+        			row 	< col)) {
+            		__t 	= row;
+            		row 	= col;
+            		col 	= __t;
+            	} 
+            	var _row	= row + 2,											// 为了留出连线的地方，多来一格
+            		_col 	= col + 2,											// 同上
+            		_bW 	= _tInt((width - (gap * (_col - 2))) / _col),		// 宽度
+            		_bH 	= _tInt((height - (gap * (_row - 2))) / _row),		// 高度
+            		bWidth 	= Math.min(_bW, _bH),								// 方块的宽度
+            		mTop 	= (height - bWidth * row - gap * (row - 2) ) / 2,	// 顶部留白
+            		mLeft 	= (width - bWidth * col - gap * (col - 2) ) / 2;	// 左侧留白
+/**/
+            	_drawImg(_imgList[1], mLeft, mTop, bWidth, bWidth);
+            	_drawImg(_imgList[3], mLeft + bWidth + gap, mTop + bWidth + gap, bWidth, bWidth);
+            	_drawImg(_imgList[5], mLeft + bWidth + gap + bWidth + gap, mTop + bWidth + gap + bWidth + gap, bWidth, bWidth);
+            	_drawImg(_imgList[5], mLeft + bWidth + gap + bWidth + gap + bWidth + gap, mTop + bWidth + gap + bWidth + gap, bWidth, bWidth);
+            	_randomMatrix(row, col);
+            }
+
+            /*
+            	为了能连线，所以给二维数组外边多裹一层
+				就像 col:3,row:4
+				[
+					[0, 0, 0, 0, 0],
+					[0, 1, 2, 3, 0],
+					[0, 1, 3, 4, 0],
+					[0, 4, 2, 2, 0],
+					[0, 3, 3, 2, 0],
+					[0, 0, 0, 0, 0]
+				]
+				实际方块为：
+				[
+
+				       [1, 2, 3],
+				       [1, 3, 4],
+				       [4, 2, 2],
+				       [3, 3, 2]
+
+				]
+        	*/
+            function _randomMatrix (row, col) {
+
+	            var max 	= row * col,	// 先随机一波的位置
+	            	size	= _imgList.length,
+	            	cursor	= 0,
+	            	info 	= [],
+	            	randoms = [];
+	            for (var _i = 0; _i < max; _i++) {
+	                var num;
+	                while ((num = build(), check(num)));
+	                randoms.push(num);
+	                info.push({
+	                	index 	: num,
+	                	cardInd	: (cursor = cursor == _imgList.length ? 0 : cursor, cursor++)
+	                });
+	            }
+
+	            var matrix = [];
+	            for (let rowIndex = 0, rowLen = row + 2; rowIndex < rowLen; rowIndex++) {
+	            	let rows = [];
+	            	for (let colIndex = 0, colLen = col + 2; colIndex < colLen; colIndex++) {
+	            		rows.push((rowIndex === 0 || 
+            					colIndex === 0 || 
+            					rowIndex === rowLen - 1 || 
+            					colIndex === colLen - 1) ? 0 : )
+	            	}
+	            }
+
+	            //生成随机数
+	            function build () {
+	                return ~~(Math.random() * max) + 1;
+	            }
+	            //判断是否重复
+	            function check (number) {
+	                return indexOf(randoms, number) !== -1;
+	            }
+
+
+	            matrix.forEach((item) => {
+	            	console.log(item);
+	            })
+	            //console.log(matrix);
+            }
+        }
+
+    }
+    var board = document.getElementById('board'),
+        imgList = [
+            'resource/images/bord1.png',
+            'resource/images/bord2.png',
+            'resource/images/bord3.png',
+            'resource/images/bord4.png',
+            'resource/images/bord5.png',
+            'resource/images/bord6.png'
+        ],
+        backColor = 'green';
+    var myBoard = new Board(board, imgList, backColor);
+    myBoard.setConfig({
+    	col		: 4,
+    	row		: 3,
+    	bColor 	: "black"
+    }).onChange((state) => {
+    	if (state === "complete") {
+
+    		myBoard.build();
+    	}
+    });
+    </script>
+</body>
+
+</html>
