@@ -72,7 +72,7 @@
 
 	    for (let m of methods) {
 	        let method = m;
-	        Canvas2DContext.prototype[method] = function() {
+	        Canvas2DContext.prototype[method]  = function() {
 	            this.ctx[method].apply(this.ctx, arguments);
 	            return this;
 	        };
@@ -80,14 +80,14 @@
 
 	    for (let m of getterMethods) {
 	        let method = m;
-	        Canvas2DContext.prototype[method] = function() {
+	        Canvas2DContext.prototype[method]  = function() {
 	            return this.ctx[method].apply(this.ctx, arguments);
 	        };
 	    }
 
 	    for (let p of props) {
 	        let prop = p;
-	        Canvas2DContext.prototype[prop] = function(value) {
+	        Canvas2DContext.prototype[prop]    = function(value) {
 	            if (value === undefined)
 	                return this.ctx[prop];
 	            this.ctx[prop] = value;
@@ -112,10 +112,10 @@
 
             // 初始化
             var _rebuild 		= this.rebuild 		= () => {
-                var parentStyle = getComputedStyle(_canvas.parentNode),		// 获取canvas父元素的宽高
+                var parentStyle = getComputedStyle(_canvas.parentNode),         // 获取canvas父元素的宽高
                 	pHeight 	= _tInt(parentStyle.height),						
                 	pWidth 		= _tInt(parentStyle.width);
-                _canvas.height 	= pHeight;									// 去除px
+                _canvas.height 	= pHeight;                                      // 去除px
                 _canvas.width 	= pWidth;
 
 
@@ -136,6 +136,9 @@
             }, _build 			= this.build 		= () => {
             	// 绘制矩阵
             	_buildMatrix();
+                // 绑定点击事件
+                _clickHandler();
+                console.log(_map);
             	return this;
             }, _stateChange		= this.onChange		= (callback) => {
             	_callback = callback;
@@ -161,7 +164,8 @@
             		bWidth 		: 1,		// 方块的边框宽
             		bColor 		: 'red',	// 方块的边框颜色
             		gap			: 2			// 两个方块之间的空隙
-            	};
+            	},
+                _map            = [];       // 点击事件时需要的一个坐标图
 
             // ========================
 
@@ -207,7 +211,7 @@
             		__t;
             	// 将行、列数量修改为更合理的
             	if ((width 	> height & 
-            	    row 	> col) ||
+            	    row 	> col)   ||
             		(width 	< height & 
         			row 	< col)) {
             		__t 	= row;
@@ -216,17 +220,50 @@
             	} 
             	var _row	= row + 2,											// 为了留出连线的地方，多来一格
             		_col 	= col + 2,											// 同上
-            		_bW 	= _tInt((width - (gap * (_col - 2))) / _col),		// 宽度
+            		_bW 	= _tInt((width  - (gap * (_col - 2))) / _col),		// 宽度
             		_bH 	= _tInt((height - (gap * (_row - 2))) / _row),		// 高度
             		bWidth 	= Math.min(_bW, _bH),								// 方块的宽度
             		mTop 	= (height - bWidth * row - gap * (row - 2) ) / 2,	// 顶部留白
-            		mLeft 	= (width - bWidth * col - gap * (col - 2) ) / 2;	// 左侧留白
-/**/
-            	_drawImg(_imgList[1], mLeft, mTop, bWidth, bWidth);
-            	_drawImg(_imgList[3], mLeft + bWidth + gap, mTop + bWidth + gap, bWidth, bWidth);
-            	_drawImg(_imgList[5], mLeft + bWidth + gap + bWidth + gap, mTop + bWidth + gap + bWidth + gap, bWidth, bWidth);
-            	_drawImg(_imgList[5], mLeft + bWidth + gap + bWidth + gap + bWidth + gap, mTop + bWidth + gap + bWidth + gap, bWidth, bWidth);
-            	_randomMatrix(row, col);
+            		mLeft 	= (width  - bWidth * col - gap * (col - 2) ) / 2;	// 左侧留白
+
+            	var matrixs = _matrix  = _randomMatrix(row, col);
+                // 这里用来生成棋盘
+                for (let rowIndex      = 0, rowLen = matrixs.length; rowIndex < rowLen; rowIndex++) {
+                    let flag = rowIndex > 0 && rowIndex < rowLen - 1;
+                    var rows           = matrixs[rowIndex]
+                    if (flag) {
+                        var mapTop     = mTop  + ((rowIndex - 1) * (bWidth + gap)),
+                            mapRow     = {
+                                top    : mapTop,
+                                bottom : mapTop + bWidth,
+                                col    : []
+                            };
+                    }
+                    for (let colIndex  = 0, colLen = rows.length; colIndex < colLen; colIndex++) {
+                        let column     = rows[colIndex];
+                        if (column) {                                           // 绘制方块，跳过占位的0
+                            let mapLeft= mLeft + ((colIndex - 1) * (bWidth + gap)),
+                                mapCol = {
+                                left   :   mapLeft,
+                                right  :   mapLeft + bWidth,
+                                boradId:   column,
+                                x      :   rowIndex,
+                                y      :   colIndex
+                            }
+                            _drawImg(_imgList[column - 1], mapCol.left, mapRow.top, bWidth, bWidth);
+                            mapRow.col.push(mapCol);
+                        }
+                    }
+                    if (flag) {
+                        _map.push(mapRow);
+                    }
+                }
+
+                // 点击事件时判断是否点击有效区域
+                _map.borderTop = mTop;
+                _map.borderLeft = mLeft;
+                _map.borderBottom = mTop  + (matrixs.length - 2) * (bWidth + gap);
+                _map.borderRight = mLeft  + (matrixs[0].length - 2) * (bWidth + gap);
             }
 
             /*
@@ -252,19 +289,16 @@
         	*/
             function _randomMatrix (row, col) {
 
-	            var max 	= row * col,	// 先随机一波的位置
+	            var max 	= row * col,	 // 先随机一波的位置
 	            	size	= _imgList.length,
+                    index   = 0,
 	            	cursor	= 0,
 	            	info 	= [],
 	            	randoms = [];
 	            for (var _i = 0; _i < max; _i++) {
 	                var num;
-	                while ((num = build(), check(num)));
-	                randoms.push(num);
-	                info.push({
-	                	index 	: num,
-	                	cardInd	: (cursor = cursor == _imgList.length ? 0 : cursor, cursor++)
-	                });
+	                while ((num = build(), check(info, num)));
+	                info.push(num);
 	            }
 
 	            var matrix = [];
@@ -274,8 +308,11 @@
 	            		rows.push((rowIndex === 0 || 
             					colIndex === 0 || 
             					rowIndex === rowLen - 1 || 
-            					colIndex === colLen - 1) ? 0 : )
+            					colIndex === colLen - 1) ? 
+                            0 : 
+                            ((info[index++] % size) + 1))
 	            	}
+                    matrix.push(rows);
 	            }
 
 	            //生成随机数
@@ -283,16 +320,64 @@
 	                return ~~(Math.random() * max) + 1;
 	            }
 	            //判断是否重复
-	            function check (number) {
-	                return indexOf(randoms, number) !== -1;
+	            function check (arr, number) {
+	                return indexOf(arr, number) !== -1;
 	            }
 
 
-	            matrix.forEach((item) => {
+	            /*matrix.forEach((item) => {
 	            	console.log(item);
-	            })
-	            //console.log(matrix);
+	            })*/
+                return matrix;
             }
+
+            function _clickHandler () {
+                _canvas.removeEventListener("click", _handler);
+                _canvas.addEventListener("click", _handler);
+
+            }
+
+            function _handler (e) {
+                var x, y;
+                if (e.layerX || e.layerX == 0) {
+                    x = e.layerX;
+                    y = e.layerY;
+                } else if (e.offsetX || e.offsetX == 0) { // Opera
+                    x = eoffsetX;
+                    y = eoffsetY;
+                }
+
+                var activeBoard = _getBoard(x, y, _map);
+            }
+
+            function _getBoard (x, y, map) {
+                if (y > map.borderTop && 
+                    y < map.borderBottom && 
+                    x > map.borderLeft &&
+                    x < map.borderRight) {              // 判断是否点击到有效区域
+                    var rowLen = map.length;
+                    while (rowLen--) {
+                        let row = map[rowLen];
+                        if (y > row.top &&
+                            y < row.bottom) {           // 定位到行（háng）
+                            let cols    = row.col,
+                                colLen  = cols.length;
+                            while (colLen--) {
+                                let col = cols[colLen];
+                                if (x > col.left &&
+                                    x < col.right) {    // 定位到某一格
+                                    return col;
+                                }
+                            }
+                            return null;                // 认为到这里再没找到就是被移除了
+                        }
+                    }
+                    return null;                        // 一般来说不会走到这里的
+                }
+                return null;                            
+            }
+
+
         }
 
     }
@@ -310,6 +395,7 @@
     myBoard.setConfig({
     	col		: 4,
     	row		: 3,
+        gap     : 10,
     	bColor 	: "black"
     }).onChange((state) => {
     	if (state === "complete") {
